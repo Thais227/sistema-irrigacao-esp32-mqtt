@@ -1,0 +1,98 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+const char* ssid = "Wokwi-GUEST";
+const char* password = "";
+const char* mqtt_server = "broker.hivemq.com";
+
+const char* mqtt_topic = "irrigacao/umidade";
+const char* mqtt_status = "irrigacao/status";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+const int sensorPin = 34; // pino do potenciômetro
+const int relePin = 2;    // pino do LED
+
+void setup_wifi() {
+  delay(10);
+  Serial.println();
+  Serial.print("Conectando ao WiFi: ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi conectado:");
+  Serial.println(WiFi.localIP());
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Conectando ao broker MQTT...");
+    if (client.connect("ESP32Client")) {
+      Serial.println("Conectado!");
+    } else {
+      Serial.print("Falha, rc=");
+      Serial.print(client.state());
+      delay(2000);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(relePin, OUTPUT);
+  digitalWrite(relePin, HIGH); // LED apagado inicialmente
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+}
+
+void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+
+  // Medição: Sensor → MQTT
+  unsigned long inicioSensor = millis();
+  int valorSensor = analogRead(sensorPin);
+  int umidade = map(valorSensor, 4095, 0, 0, 100);
+  client.publish(mqtt_topic, String(umidade).c_str());
+  unsigned long fimSensor = millis();
+  unsigned long tempoSensor = fimSensor - inicioSensor;
+
+  Serial.print("Umidade: ");
+  Serial.print(umidade);
+  Serial.println("%");
+  Serial.print("Tempo Sensor → MQTT: ");
+  Serial.print(tempoSensor);
+  Serial.println(" ms");
+
+  // Medição: Sensor → Atuador
+  unsigned long inicioAtuador = millis();
+  String mensagem;
+
+  if (umidade <= 30) {
+    digitalWrite(relePin, LOW);  // Liga bomba (LED aceso)
+    mensagem = "Solo seco - iniciando irrigacao";
+  } else if (umidade <= 60) {
+    digitalWrite(relePin, HIGH); // Desliga bomba
+    mensagem = "Solo moderadamente umido - irrigacao nao necessaria";
+  } else {
+    digitalWrite(relePin, HIGH); // Desliga bomba
+    mensagem = "Solo umido - irrigacao suficiente";
+  }
+
+  client.publish(mqtt_status, mensagem.c_str());
+  unsigned long fimAtuador = millis();
+  unsigned long tempoAtuador = fimAtuador - inicioAtuador;
+
+  Serial.println(mensagem);
+  Serial.print("Tempo Sensor → Atuador: ");
+  Serial.print(tempoAtuador);
+  Serial.println(" ms");
+
+  delay(5000);
+}
